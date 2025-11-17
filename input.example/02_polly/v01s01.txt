@@ -1,0 +1,1 @@
+Olá! Hoje vamos falar sobre Inteligência Artificial Generativa na AWS.

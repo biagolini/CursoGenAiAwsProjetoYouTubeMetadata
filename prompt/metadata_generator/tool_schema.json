@@ -1,0 +1,81 @@
+{
+  "tools": [
+    {
+      "toolSpec": {
+        "name": "extract_youtube_metadata",
+        "description": "Extracts structured YouTube metadata from documents with multilingual support",
+        "inputSchema": {
+          "json": {
+            "type": "object",
+            "properties": {
+              "localizations": {
+                "type": "object",
+                "description": "Multilingual metadata for the video. Each language must have title and description in that specific language.",
+                "properties": {
+                  "pt": {
+                    "type": "object",
+                    "description": "Portuguese (Brazilian) metadata - título e descrição devem estar em português brasileiro",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "Video title in Portuguese (max 60 characters, must be in Portuguese)"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Video description in Portuguese (150-2000 characters, must be in Portuguese)"
+                      }
+                    },
+                    "required": ["title", "description"]
+                  },
+                  "en": {
+                    "type": "object",
+                    "description": "English metadata - title and description must be in English",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "Video title in English (max 60 characters, must be in English)"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Video description in English (150-2000 characters, must be in English)"
+                      }
+                    },
+                    "required": ["title", "description"]
+                  },
+                  "es": {
+                    "type": "object",
+                    "description": "Spanish metadata - título y descripción deben estar en español",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "Video title in Spanish (max 60 characters, must be in Spanish)"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Video description in Spanish (150-2000 characters, must be in Spanish)"
+                      }
+                    },
+                    "required": ["title", "description"]
+                  }
+                },
+                "required": ["pt", "en", "es"]
+              },
+              "tags": {
+                "type": "array",
+                "description": "3-10 relevant tags for the video in English (single words or short phrases, relevant to video content)",
+                "items": {
+                  "type": "string",
+                  "description": "A single tag keyword"
+                },
+                "minItems": 3,
+                "maxItems": 10
+              }
+            },
+            "required": ["localizations", "tags"]
+          }
+        }
+      }
+    }
+  ],
+  "toolChoice": { "tool": { "name": "extract_youtube_metadata" } }
+}

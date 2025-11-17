@@ -1,0 +1,1 @@
+A GenAI está transformando a forma como empresas criam conteúdo, automatizam processos e interagem com clientes. Com a AWS, você pode implementar soluções de IA generativa de forma segura, escalável e integrada ao seu ambiente de nuvem existente. Vamos explorar como aproveitar todo esse potencial!

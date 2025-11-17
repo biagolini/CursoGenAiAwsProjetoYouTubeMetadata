@@ -1,0 +1,1 @@
+Bem-vindos ao segundo vídeo da nossa série! Hoje vamos mergulhar no Amazon Bedrock, a plataforma central da AWS para Inteligência Artificial Generativa.
