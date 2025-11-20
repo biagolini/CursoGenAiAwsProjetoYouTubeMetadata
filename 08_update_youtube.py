@@ -30,6 +30,32 @@ OUTPUT_FOLDER = os.getenv('OUTPUT_FOLDER')
 
 METADATA_FILE = os.getenv('METADATA_OUTPUT_FILE')
 
+def limpar_conteudo(titulo, descricao, video_id):
+    """Limpa título e descrição para atender limites do YouTube"""
+    titulo_limpo = titulo
+    descricao_limpa = descricao
+    
+    # Limpar título (máximo 100 caracteres)
+    if len(titulo) > 100:
+        titulo_limpo = titulo[:100]
+        print(f"[AVISO] Título truncado para vídeo {video_id}: {len(titulo)} -> 100 caracteres")
+    
+    # Limpar descrição (máximo 5000 caracteres, cortando no último ". ")
+    if len(descricao) > 5000:
+        descricao_temp = descricao
+        while len(descricao_temp) > 5000:
+            last_sentence_end = descricao_temp.rfind(". ", 0, 5000)
+            if last_sentence_end == -1:
+                descricao_temp = descricao_temp[:5000].rstrip()
+                break
+            else:
+                descricao_temp = descricao_temp[:last_sentence_end + 2]
+        
+        descricao_limpa = descricao_temp
+        print(f"[AVISO] Descrição truncada para vídeo {video_id}: {len(descricao)} -> {len(descricao_limpa)} caracteres")
+    
+    return titulo_limpo, descricao_limpa
+
 def setup_youtube_client():
     """Configura cliente YouTube Data API"""
     TOKEN_FILE = "token_admin.json"
@@ -134,9 +160,16 @@ def update_video_metadata(youtube, video_id, metadata):
         default_content = metadata["localizations"][default_language]
         
         # Prepara snippet com conteúdo do idioma padrão
+        # Aplicar limpeza no conteúdo padrão
+        titulo_limpo, descricao_limpa = limpar_conteudo(
+            default_content["title"], 
+            default_content["description"], 
+            video_id
+        )
+        
         snippet = {
-            "title": default_content["title"],
-            "description": default_content["description"],
+            "title": titulo_limpo,
+            "description": descricao_limpa,
             "tags": metadata.get("tags", []),
             "defaultLanguage": default_language,
             "categoryId": "27"
@@ -148,9 +181,14 @@ def update_video_metadata(youtube, video_id, metadata):
         localizations = {}
         for lang, content in metadata["localizations"].items():
             if lang != default_language:
+                titulo_limpo, descricao_limpa = limpar_conteudo(
+                    content["title"], 
+                    content["description"], 
+                    video_id
+                )
                 localizations[lang] = {
-                    "title": content["title"],
-                    "description": content["description"]
+                    "title": titulo_limpo,
+                    "description": descricao_limpa
                 }
         
         if localizations:

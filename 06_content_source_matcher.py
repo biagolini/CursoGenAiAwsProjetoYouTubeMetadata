@@ -217,9 +217,6 @@ def fetch_youtube_transcriptions(df):
             
             # Salvar transcrição em arquivo texto
             with open(transcription_file, 'w', encoding='utf-8') as f:
-                f.write(f"# Transcrição: {video_title}\n")
-                f.write(f"# Video ID: {video_id}\n")
-                f.write(f"# Idioma: {caption_lang}\n\n")
                 f.write(' '.join(text_only))
             
             # Atualizar referência na tabela

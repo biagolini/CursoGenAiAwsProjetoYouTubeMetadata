@@ -31,7 +31,26 @@ START_DATE = os.getenv('METADATA_START_DATE')
 INTERVAL_DAYS = int(os.getenv('METADATA_INTERVAL_DAYS', 1))
 PUBLISH_TIME = os.getenv('METADATA_PUBLISH_TIME')
 
-YOUTUBE_DEFAULT_LANGUAGE = os.getenv('YOUTUBE_DEFAULT_LANGUAGE', 'pt')
+METADATA_MAX_RETRIES = int(os.getenv('METADATA_MAX_RETRIES', 3))
+
+# Metadados genéricos de fallback
+FALLBACK_METADATA = {
+    "localizations": {
+        "pt": {
+            "title": "Aprenda AWS: Guia Prático",
+            "description": "Descubra como usar os serviços da AWS de forma prática e eficiente. Este vídeo apresenta conceitos fundamentais e exemplos reais para acelerar seu aprendizado em computação em nuvem.\n\n#AWS #Cloud #Tutorial #Tecnologia #Desenvolvimento"
+        },
+        "en": {
+            "title": "Learn AWS: Practical Guide", 
+            "description": "Discover how to use AWS services in a practical and efficient way. This video presents fundamental concepts and real examples to accelerate your cloud computing learning.\n\n#AWS #Cloud #Tutorial #Technology #Development"
+        },
+        "es": {
+            "title": "Aprende AWS: Guía Práctica",
+            "description": "Descubre cómo usar los servicios de AWS de manera práctica y eficiente. Este video presenta conceptos fundamentales y ejemplos reales para acelerar tu aprendizaje en computación en la nube.\n\n#AWS #Cloud #Tutorial #Tecnología #Desarrollo"
+        }
+    },
+    "tags": ["AWS", "Cloud", "Tutorial", "Technology", "Development"]
+}
 
 REFERENCE_TEXT = {
     "pt": "Referências:",
@@ -87,6 +106,23 @@ def load_video_data():
     
     return df_filtered, original_count
 
+def load_transcription_if_exists(video_id):
+    """Carrega transcrição se existir arquivo correspondente"""
+    transcription_folder = os.path.join(OUTPUT_FOLDER, "transcriptions")
+    transcription_file = os.path.join(transcription_folder, f"{video_id}.txt")
+    
+    if os.path.exists(transcription_file):
+        try:
+            with open(transcription_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    print(f"  Transcrição encontrada: {len(content)} caracteres")
+                    return content
+        except Exception as e:
+            print(f"  Erro ao ler transcrição: {e}")
+    
+    return None
+
 def sanitize_document_name(file_path):
     """Sanitiza o nome do documento para atender requisitos do Bedrock"""
     file_extension = os.path.splitext(file_path)[1][1:].lower()
@@ -108,6 +144,26 @@ def sanitize_document_name(file_path):
     return document_name
 
 
+
+def truncate_description(description, max_length=5000):
+    """Trunca descrição se exceder o limite, cortando no último '. ' (ponto + espaço)"""
+    if len(description) <= max_length:
+        return description
+    
+    # Cortar até caber no limite
+    while len(description) > max_length:
+        # Encontrar a última ocorrência de ". " antes do limite
+        last_sentence_end = description.rfind(". ", 0, max_length)
+        
+        if last_sentence_end == -1:
+            # Se não encontrar ". ", cortar no limite mesmo
+            description = description[:max_length].rstrip()
+            break
+        else:
+            # Cortar após o ". " (incluindo o ponto e espaço)
+            description = description[:last_sentence_end + 2]
+    
+    return description
 
 def add_references_and_links(metadata, bibliography_references):
     """Adiciona referências bibliográficas e links adicionais aos metadados"""
@@ -138,6 +194,16 @@ def add_references_and_links(metadata, bibliography_references):
                 metadata["localizations"][lang]["description"] += references_text[lang]
             if lang in additional_text:
                 metadata["localizations"][lang]["description"] += additional_text[lang]
+            
+            # Truncar descrição se exceder 5000 caracteres
+            original_length = len(metadata["localizations"][lang]["description"])
+            metadata["localizations"][lang]["description"] = truncate_description(
+                metadata["localizations"][lang]["description"]
+            )
+            new_length = len(metadata["localizations"][lang]["description"])
+            
+            if original_length > new_length:
+                print(f"  Descrição {lang} truncada: {original_length} → {new_length} caracteres")
     
     return metadata
 
@@ -164,42 +230,56 @@ def validate_metadata(result):
     
     return True, "Válido"
 
-def generate_metadata_with_bedrock(file_path, call_number, max_retries=3):
+def generate_metadata_with_bedrock(file_path, call_number, transcription_content=None):
     """Gera metadados usando AWS Bedrock com Tool Use"""
     
     print(f"Gerando metadados...")
     print(f"Arquivo: {file_path}")
     
-    # Ler documento local
-    with open(file_path, "rb") as f:
-        doc_bytes = f.read()
+    if transcription_content:
+        # Modo transcrição: apenas texto, sem anexar arquivo
+        print(f"Transcrição incluída: {len(transcription_content)} caracteres")
+        
+        transcription_text = f"the following transcription context:\n\nThe following context is the transcription of the audio content. Please note that there may be errors due to transcription inaccuracies:\n\n<AUDIO-TRANSCRIPTION>\n{transcription_content}\n</AUDIO-TRANSCRIPTION>"
+        
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"text": f"Generate YouTube metadata from {transcription_text}."}
+                ]
+            }
+        ]
+    else:
+        # Modo documento: anexar arquivo
+        with open(file_path, "rb") as f:
+            doc_bytes = f.read()
+        
+        file_extension = os.path.splitext(file_path)[1][1:].lower()
+        document_name = sanitize_document_name(file_path)
+        
+        print(f"Documento: {len(doc_bytes)} bytes ({len(doc_bytes) / 1024 / 1024:.2f} MB)")
+        
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "document": {
+                            "format": file_extension,
+                            "name": document_name,
+                            "source": {"bytes": doc_bytes}
+                        }
+                    },
+                    {"text": "Generate YouTube metadata from the attached document."}
+                ]
+            }
+        ]
     
-    file_extension = os.path.splitext(file_path)[1][1:].lower()
-    document_name = sanitize_document_name(file_path)
-    
-    print(f"Documento: {len(doc_bytes)} bytes ({len(doc_bytes) / 1024 / 1024:.2f} MB)")
-    
-    # Mensagem com documento local
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "document": {
-                        "format": file_extension,
-                        "name": document_name,
-                        "source": {"bytes": doc_bytes}
-                    }
-                },
-                {"text": "Generate YouTube metadata from the document."}
-            ]
-        }
-    ]
-    
-    # Tentar até max_retries vezes
-    for attempt in range(1, max_retries + 1):
+    # Tentar até METADATA_MAX_RETRIES vezes
+    for attempt in range(1, METADATA_MAX_RETRIES + 1):
         if attempt > 1:
-            print(f"Tentativa {attempt}/{max_retries}...")
+            print(f"Tentativa {attempt}/{METADATA_MAX_RETRIES}...")
         else:
             print(f"Enviando requisição para Bedrock...")
         
@@ -220,44 +300,53 @@ def generate_metadata_with_bedrock(file_path, call_number, max_retries=3):
                 return result
             else:
                 print(f"  [AVISO] Metadados incompletos: {validation_message}")
-                if attempt < max_retries:
+                if attempt < METADATA_MAX_RETRIES:
                     print(f"Tentando novamente...")
                 else:
-                    print(f"  [AVISO] Máximo de tentativas atingido, salvando metadados incompletos")
-                    return result
+                    print(f"  [AVISO] Máximo de tentativas atingido, usando metadados genéricos")
+                    return FALLBACK_METADATA.copy()
         
         except ClientError as e:
             error_code = e.response['Error']['Code']
             error_message = e.response['Error']['Message']
             
             print(f"  Erro: {error_code}")
-            print(f"  Mensagem: {error_message}\n")
-            print("  Sugestões:")
+            print(f"  Mensagem: {error_message}")
             
-            if error_code == "ModelErrorException":
-                print("  - Verifique se o limite máximo de tokens de saída no prompt está suficiente (recomendado: 500+)")
-                print("  - Verifique se o limite máximo de tokens de entrada suporta o tamanho do documento")
-                print("  - Arquivos muito grandes podem exceder o limite de entrada do modelo")
-                print("  - Confirme que o schema da ferramenta está configurado corretamente no Bedrock Prompt Manager")
-                print("  - Verifique se o ARN do prompt é válido e acessível")
-            elif error_code == "ValidationException":
-                print("  - O nome do arquivo contém caracteres inválidos ou múltiplos espaços consecutivos")
-                print("  - Renomeie o arquivo usando apenas: letras, números, espaços, hífens, parênteses e colchetes")
-            elif error_code == "ThrottlingException":
-                print("  - Muitas requisições simultâneas. Aguarde alguns segundos e tente novamente")
+            if attempt < METADATA_MAX_RETRIES:
+                print(f"  Tentando novamente ({attempt + 1}/{METADATA_MAX_RETRIES})...")
             else:
-                print("  - Verifique as configurações do modelo no Bedrock")
-            
-            print(f"  - Consulte mais informações sobre o modelo em:")
-            print(f"    https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html")
-            
-            return None
+                print(f"  [AVISO] Máximo de tentativas atingido, usando metadados genéricos")
+                print("  Sugestões para resolver o problema:")
+                
+                if error_code == "ModelErrorException":
+                    print("  - Verifique se o limite máximo de tokens de saída no prompt está suficiente (recomendado: 500+)")
+                    print("  - Verifique se o limite máximo de tokens de entrada suporta o tamanho do documento")
+                    print("  - Arquivos muito grandes podem exceder o limite de entrada do modelo")
+                    print("  - Confirme que o schema da ferramenta está configurado corretamente no Bedrock Prompt Manager")
+                    print("  - Verifique se o ARN do prompt é válido e acessível")
+                elif error_code == "ValidationException":
+                    print("  - O nome do arquivo contém caracteres inválidos ou múltiplos espaços consecutivos")
+                    print("  - Renomeie o arquivo usando apenas: letras, números, espaços, hífens, parênteses e colchetes")
+                elif error_code == "ThrottlingException":
+                    print("  - Muitas requisições simultâneas. Aguarde alguns segundos e tente novamente")
+                else:
+                    print("  - Verifique as configurações do modelo no Bedrock")
+                
+                print(f"  - Consulte mais informações sobre o modelo em:")
+                print(f"    https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html")
+                
+                return FALLBACK_METADATA.copy()
         
         except Exception as e:
             print(f"  Erro inesperado: {e}")
-            return None
+            if attempt < METADATA_MAX_RETRIES:
+                print(f"  Tentando novamente ({attempt + 1}/{METADATA_MAX_RETRIES})...")
+            else:
+                print(f"  [AVISO] Máximo de tentativas atingido, usando metadados genéricos")
+                return FALLBACK_METADATA.copy()
     
-    return None
+    return FALLBACK_METADATA.copy()
 
 # Carregar vídeos
 df, original_count = load_video_data()
@@ -305,28 +394,31 @@ for i, (_, row) in enumerate(df.iterrows(), 1):
         print(f"  Arquivo não encontrado: {row['material_link']}")
         continue
     
+    # Carregar transcrição se existir
+    transcription_content = load_transcription_if_exists(video_id)
+    
     # Gerar metadados
     new_metadata = generate_metadata_with_bedrock(
         row["material_link"],
-        i
+        i,
+        transcription_content
     )
     
-    if new_metadata:
-        # Adicionar referências e links adicionais
-        new_metadata = add_references_and_links(new_metadata, row["bibliography_references"])
-        
-        # Calcular data de publicação
-        scheduled_date = (start_date + timedelta(days=(i-1) * INTERVAL_DAYS)).strftime("%Y-%m-%d")
-        new_metadata["scheduledPublishTime"] = f"{scheduled_date}{PUBLISH_TIME}"
-        
-        # Adicionar metadados com o video_id correto
-        existing_metadata[video_id] = new_metadata
-        success_count += 1
-        
-        # Salvar progresso
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-            json.dump(existing_metadata, f, ensure_ascii=False, indent=2)
+    # Adicionar referências e links adicionais
+    new_metadata = add_references_and_links(new_metadata, row["bibliography_references"])
+    
+    # Calcular data de publicação
+    scheduled_date = (start_date + timedelta(days=(i-1) * INTERVAL_DAYS)).strftime("%Y-%m-%d")
+    new_metadata["scheduledPublishTime"] = f"{scheduled_date}{PUBLISH_TIME}"
+    
+    # Adicionar metadados com o video_id correto
+    existing_metadata[video_id] = new_metadata
+    success_count += 1
+    
+    # Salvar progresso
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(existing_metadata, f, ensure_ascii=False, indent=2)
 
 print(f"\n=== Processamento Concluído ===")
 print(f"Vídeos processados: {success_count}/{len(df)}")

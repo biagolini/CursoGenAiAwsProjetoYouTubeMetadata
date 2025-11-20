@@ -67,11 +67,11 @@
                   "type": "string",
                   "description": "A single tag keyword"
                 },
-                "minItems": 3,
+                "minItems": 0,
                 "maxItems": 10
               }
             },
-            "required": ["localizations", "tags"]
+            "required": ["localizations"]
           }
         }
       }
